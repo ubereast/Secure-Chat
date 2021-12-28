@@ -1,0 +1,7 @@
+.*
+!.gitignore
+build/
+dist/
+client.spec
+__pycache__/
+testing/
