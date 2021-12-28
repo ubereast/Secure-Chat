@@ -63,7 +63,7 @@ class Server():
             self.server.bind((self.host, self.port))
             self.server.listen()
         except Exception:
-            print("Cannot bind server to {} -p {}".format(self.host, self.port))
+            print("Coult not bind server to {} -p {}".format(self.host, self.port))
             sys.exit()
 
         self.connections = {"main": {"admin": None, "clients": {}, "invited-ids": []}}
@@ -91,7 +91,7 @@ class Server():
     ###################
 
     def listen(self):
-        print(f"[+] Listening on {self.host} port {self.port}")
+        print(f"✅ Listening on {self.host} port {self.port}")
         failed = 0
         while True:
             try:
@@ -117,7 +117,7 @@ class Server():
         """"""
         try:
             # SERVER KEY EXCHANGE
-            client.send("server-auth", self.public_key)
+            client.send("server-auth", None)
             pub_key = client.recv()["data"]
 
             # CLIENT INFO RECV

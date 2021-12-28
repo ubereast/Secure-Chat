@@ -1,11 +1,10 @@
+import threading
+import time
+import itertools
 from Crypto.PublicKey import RSA
 from Crypto.Cipher import PKCS1_OAEP
-from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
-
-import itertools
-import time
-import threading
+import os
 
 keyPair = None
 AES_KEY = get_random_bytes(16)
@@ -26,9 +25,10 @@ def generate_key():
             time.sleep(0.1)
 
     threading.Thread(target=animate).start()
-    # keyPair = RSA.generate(4096)
-    private_key = open("server/modules/private.pem", "r").read()
-    public_key = open("server/modules/public.pem", "r").read()
+
+    private_key = open("modules/.private.pem", "r").read().replace("\\n", "\n").encode("utf-8")
+    public_key = open("modules/public.pem", "r").read().replace("\\n", "\n").encode("utf-8")
+
     done = True
     return True
 

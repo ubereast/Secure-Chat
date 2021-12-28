@@ -29,7 +29,7 @@ def generate_key():
             time.sleep(0.1)
 
     threading.Thread(target=animate).start()
-    keyPair = RSA.generate(2048)
+    keyPair = RSA.generate(1024)
     private_key = keyPair.export_key("PEM")
     public_key = keyPair.publickey().exportKey("PEM")
     done = True

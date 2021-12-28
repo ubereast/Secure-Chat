@@ -10,6 +10,7 @@ import uuid
 import yaml
 import names
 import requests
+import hashlib
 
 HEADER_SIZE = 1024
 
@@ -19,6 +20,7 @@ class Client(object):
     def __init__(self) -> None:
 
         self.conf = self.read_conf()
+        self.format = "utf-8"
 
         self.host = None
         self.port = self.conf["server"]["port"]
@@ -30,8 +32,7 @@ class Client(object):
         self.id = None
         self.room = "main"
         self.last_invite_room = None
-        self.server_pub = requests.get("https://k43-server.de/chat/public.pem").text
-        print(self.server_pub)
+        self.server_pub = requests.get("https://k43-server.de/chat/public.pem").text.replace("\\n", "\n").encode(self.format)
 
         self.userlist = {}
         self.chatrooms = []
@@ -47,11 +48,10 @@ class Client(object):
 
         self.unmanaged_packages = []
 
-        self.format = "utf-8"
-
     def start(self):
+        self.print("✅ Starting Secure-Chat Client", color="green")
         crypto.generate_key()
-        self.print("\r[+] Generated key pair", color="green")
+        self.print("\r✅ Generated key pair", color="green")
         for addr in self.conf["server"]["hosts"]:
             if addr == "localhost":
                 addr = socket.gethostbyname(socket.gethostname())
@@ -64,7 +64,7 @@ class Client(object):
         if not self.host:
             self.print("[-] Could not connect to server", color="red")
             return
-        self.print("[+] Connected to {}".format(self.host), color="green")
+        self.print("✅ Connected to {}".format(self.host), color="green")
         if self.conf["user"]["use-random"] is None:
             use_random_nick = input("Do you want to use a random nickname? [Y/n]: ")
             if use_random_nick.lower() == "y" or use_random_nick == "":
@@ -122,6 +122,7 @@ class Client(object):
                     crypto.generate_aes_key()
                     package_data["messagedata"], package_data["nonce"] = crypto.aes_encrypt(package_data["messagedata"])
                     package_data["key"] = crypto.encrypt(crypto.AES_KEY, user["key"])
+                    package_data["fingerprint"] = crypto.aes_encrypt(package_data["fingerprint"])
                 if package_type == "file":
                     crypto.generate_aes_key()
                     package_data["name"] = crypto.encrypt(package_data["name"], user["key"])
@@ -170,7 +171,13 @@ class Client(object):
                     data = message["data"]
                     data["key"] = crypto.decrypt(data["key"], decodeData=False)
                     file = open(f'{self.file_directory}/{crypto.decrypt(data["name"])}{data["ext"]}', 'wb')
-                    file.write(crypto.aes_decrypt(data["filedata"], data["key"], data["nonce"], False))
+                    decr = crypto.aes_decrypt(data["filedata"], data["key"], data["nonce"], False)
+                    fingerprint = hashlib.sha256(decr).hexdigest()
+                    if fingerprint == data["fingerprint"]:
+                        self.print("Hash matches", color="green")
+                    else:
+                        self.print("Hash does not match", color="red")
+                    file.write(decr)
                     self.print(f"Received file {crypto.decrypt(data['name'])}{data['ext']}")
                     file.close()
 
@@ -188,7 +195,6 @@ class Client(object):
                     continue
 
                 elif message["type"] == "server-auth":
-                    self.server_pub = message["data"]
                     self.send("key", crypto.public_key)
                     continue
 
@@ -459,6 +465,7 @@ class Client(object):
                 if exists:
                     data = open(path, 'rb')
                     l = data.read()
+                    fingerprint = hashlib.sha256(l).hexdigest()
                     size = os.path.getsize(path)
                     if size > 150000000:  # 150 MB
                         self.print("[-] Filesize to big (max 150MB)", color="yellow")
@@ -467,7 +474,7 @@ class Client(object):
                     # name = path.replace("\\", "/").split("/")[-1].replace(ext, "")
                     name = str(uuid.uuid4())
                     self.broadcast("file", {
-                        "filedata": l, "name": name, "ext": ext})
+                        "filedata": l, "name": name, "ext": ext, "fingerprint": fingerprint})
                 else:
                     self.print("[-] File does not exist", color="yellow")
             else:
