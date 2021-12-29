@@ -49,9 +49,9 @@ class Client(object):
         self.unmanaged_packages = []
 
     def start(self):
-        self.print("✅ Starting Secure-Chat Client", color="green")
+        self.print("✓ Starting Secure-Chat Client", color="green")
         crypto.generate_key()
-        self.print("\r✅ Generated key pair", color="green")
+        self.print("\r✓ Generated key pair  ", color="green")
         for addr in self.conf["server"]["hosts"]:
             if addr == "localhost":
                 addr = socket.gethostbyname(socket.gethostname())
@@ -64,7 +64,7 @@ class Client(object):
         if not self.host:
             self.print("[-] Could not connect to server", color="red")
             return
-        self.print("✅ Connected to {}".format(self.host), color="green")
+        self.print("✓ Connected to {}".format(self.host), color="green")
         if self.conf["user"]["use-random"] is None:
             use_random_nick = input("Do you want to use a random nickname? [Y/n]: ")
             if use_random_nick.lower() == "y" or use_random_nick == "":
@@ -122,12 +122,12 @@ class Client(object):
                     crypto.generate_aes_key()
                     package_data["messagedata"], package_data["nonce"] = crypto.aes_encrypt(package_data["messagedata"])
                     package_data["key"] = crypto.encrypt(crypto.AES_KEY, user["key"])
-                    package_data["fingerprint"] = crypto.aes_encrypt(package_data["fingerprint"])
                 if package_type == "file":
                     crypto.generate_aes_key()
                     package_data["name"] = crypto.encrypt(package_data["name"], user["key"])
                     package_data["filedata"], package_data["nonce"] = crypto.aes_encrypt(package_data["filedata"])
                     package_data["key"] = crypto.encrypt(crypto.AES_KEY, user["key"])
+                    package_data["fingerprint"] = crypto.encrypt(package_data["fingerprint"], user["key"])
                 self.send(package_type, {"message": package_data, "id": user["id"]})
 
     def print(self, text, color="white"):
@@ -170,16 +170,27 @@ class Client(object):
                 elif message["type"] == "file":
                     data = message["data"]
                     data["key"] = crypto.decrypt(data["key"], decodeData=False)
-                    file = open(f'{self.file_directory}/{crypto.decrypt(data["name"])}{data["ext"]}', 'wb')
+                    data["name"] = crypto.decrypt(data['name'])
+                    data["fingerprint"] = crypto.decrypt(data["fingerprint"])
+                    file = open(f'{self.file_directory}/{data["name"]}{data["ext"]}', 'wb')
                     decr = crypto.aes_decrypt(data["filedata"], data["key"], data["nonce"], False)
                     fingerprint = hashlib.sha256(decr).hexdigest()
+                    size = len(decr)
+                    power = 2**10
+                    n = 0
+                    power_labels = {0: '', 1: 'kilo', 2: 'mega', 3: 'giga', 4: 'tera'}
+                    while size > power:
+                        size /= power
+                        n += 1
+                    label = power_labels[n]
+                    self.print(f"File: {data['name']}{data['ext']} ({size} {label})")
                     if fingerprint == data["fingerprint"]:
-                        self.print("Hash matches", color="green")
+                        self.print("✓ Hash matches", color="green")
                     else:
                         self.print("Hash does not match", color="red")
                     file.write(decr)
-                    self.print(f"Received file {crypto.decrypt(data['name'])}{data['ext']}")
                     file.close()
+                    self.send("file-received", {"id": data["id"]})
 
                 elif message["type"] == "nick-change":
                     nickname = message["data"]
@@ -287,6 +298,9 @@ class Client(object):
                         color="green",
                     )
                     self.last_invite_room = message["data"]
+
+                elif message["type"] == "file-received":
+                    self.print("✓ File received", color="green")
 
                 else:
                     self.print("Could not resolve message")
@@ -472,7 +486,7 @@ class Client(object):
                         return
                     ext = os.path.splitext(path)[1]
                     # name = path.replace("\\", "/").split("/")[-1].replace(ext, "")
-                    name = str(uuid.uuid4())
+                    name = str(uuid.uuid4().hex)[0:8]
                     self.broadcast("file", {
                         "filedata": l, "name": name, "ext": ext, "fingerprint": fingerprint})
                 else:

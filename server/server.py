@@ -91,7 +91,7 @@ class Server():
     ###################
 
     def listen(self):
-        print(f"✅ Listening on {self.host} port {self.port}")
+        print(f"✓ Listening on {self.host} port {self.port}")
         failed = 0
         while True:
             try:
@@ -316,7 +316,12 @@ class Server():
                     self.remove_empty()
                 elif message["type"] == "file":
                     if message["data"]["id"] in self.connections[client.room]["clients"]:
+                        message["data"]["message"]["id"] = client.id
                         self.connections[client.room]["clients"][message["data"]["id"]].send("file", message["data"]["message"])
+                elif message["type"] == "file-received":
+                    self.connections[client.room]["clients"][message["data"]["id"]].send("file-received", None)
+                else:
+                    client.send("warning", "Invalid message type")
             except socket.error:
                 try:
                     del self.connections[client.room]["clients"][client.id]
