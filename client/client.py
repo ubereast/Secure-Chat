@@ -1,7 +1,7 @@
 import os
 import socket
 import threading
-from colorama import Fore, Style
+from colorama import Fore, Style, init
 from tabulate import tabulate
 from modules.chat import Chat
 import modules.crypto as crypto
@@ -34,7 +34,7 @@ class Client(object):
         self.id = None
         self.room = "main"
         self.last_invite_room = None
-        self.server_pub = requests.get("https://k43-server.de/chat/public.pem").text.replace("\\n", "\n").encode(self.format)
+        self.server_pub = None
 
         self.userlist = {}
         self.chatrooms = []
@@ -51,12 +51,15 @@ class Client(object):
         self.unmanaged_packages = []
 
     def start(self):
+        init(convert=True)
         """
         Start the client
         """
-        self.print("✓ Starting Secure-Chat Client", color="green")
+        self.print("Starting Secure-Chat Client", color="green")
+        self.server_pub = requests.get("https://k43-server.de/chat/public.pem").text.replace("\\n", "\n").encode(self.format)
+        self.print("Got server public key", color="green")
         crypto.generate_key()
-        self.print("\r✓ Generated key pair  ", color="green")
+        self.print("\rGenerated key pair   ", color="green")
         for addr in self.conf["server"]["hosts"]:
             if addr == "localhost":
                 addr = socket.gethostbyname(socket.gethostname())
@@ -67,9 +70,9 @@ class Client(object):
             except socket.error:
                 continue
         if not self.host:
-            self.print("[-] Could not connect to server", color="red")
+            self.print("[-] Could not connect to Server", color="red")
             return
-        self.print("✓ Connected to Server", color="green")
+        self.print("Connected to {}".format(self.host), color="green")
         if self.conf["user"]["use-random"] is None:
             use_random_nick = input("Do you want to use a random nickname? [Y/n]: ")
             if use_random_nick.lower() == "y" or use_random_nick == "":
@@ -116,10 +119,8 @@ class Client(object):
         all = 0
         progress = 0
         while len(data) < header:
-            progress += min(4096, header - len(data))
-            data += self.client.recv(min(4096, header - len(data)))
-            # if header >= 10000000:
-            #     self.print("[-] Received {} of {} bytes      ".format(progress, header), color="red", end="\r")
+            progress += min(16384, header - len(data))
+            data += self.client.recv(min(16384, header - len(data)))
         package = bson.loads(data)
         return package
 
@@ -142,7 +143,8 @@ class Client(object):
         :param package_type:
         :param package_data:
         :return:"""
-        if len(self.userlist) == 0:
+        myUserList = [user for user in self.userlist if self.userlist[user]["room"] == self.room]
+        if len(myUserList) == 0:
             return
         if package_type == "message":
             crypto.generate_aes_key()
@@ -153,16 +155,16 @@ class Client(object):
             package_data["filedata"], package_data["nonce"] = crypto.aes_encrypt(package_data["filedata"])
             package_data["fingerprint"], package_data["fingerprintnonce"] = crypto.aes_encrypt(package_data["fingerprint"])
             self.print("Sending file...          ", end="\r")
-        for user in self.userlist.values():
+        for user in myUserList:
+            user = self.userlist[user]
             package_data_copy = package_data.copy()
-            if user["room"] == self.room:
-                if package_type == "message":
-                    package_data_copy["key"] = crypto.encrypt(crypto.AES_KEY, user["key"])
-                if package_type == "file":
-                    package_data_copy["name"] = crypto.encrypt(package_data_copy["name"], user["key"])
-                    package_data_copy["key"] = crypto.encrypt(crypto.AES_KEY, user["key"])
-                    # self.print("Sendig file to {}...         ".format(user["nick"]), end="\r")
-                self.send(package_type, {"message": package_data_copy, "id": user["id"]})
+            if package_type == "message":
+                package_data_copy["key"] = crypto.encrypt(crypto.AES_KEY, user["key"])
+            if package_type == "file":
+                package_data_copy["name"] = crypto.encrypt(package_data_copy["name"], user["key"])
+                package_data_copy["key"] = crypto.encrypt(crypto.AES_KEY, user["key"])
+                # self.print("Sendig file to {}...         ".format(user["nick"]), end="\r")
+            self.send(package_type, {"message": package_data_copy, "id": user["id"]})
 
     def print(self, text, color="white", end="\n"):
         """
@@ -220,15 +222,15 @@ class Client(object):
                     size = len(decr)
                     power = 2**10
                     n = 0
-                    power_labels = {0: '', 1: 'kb', 2: 'mb', 3: 'gb', 4: 'tb'}
+                    labels = {0: 'b', 1: 'kb', 2: 'mb', 3: 'gb', 4: 'tb'}
                     while size > power:
                         size /= power
                         n += 1
                     size = size // 1
-                    label = power_labels[n]
+                    label = labels[n]
                     self.print(f"File: {data['name']}{data['ext']} ({size} {label})", color="magenta")
                     if fingerprint == data["fingerprint"]:
-                        self.print("✓ Signature matches", color="green")
+                        self.print("Signature matches", color="green")
                     else:
                         self.print("Hash does not match", color="red")
                     file.write(decr)
@@ -344,7 +346,10 @@ class Client(object):
                     self.last_invite_room = message["data"]
 
                 elif message["type"] == "file-received":
-                    self.print("✓ {} received the file".format(message["data"]), color="green")
+                    self.print("{} received the file".format(message["data"]), color="green")
+
+                elif message["type"] == "kick":
+                    self.print("You were kicked from the room", color="red")
 
                 else:
                     self.print("Could not resolve message")
@@ -413,7 +418,6 @@ class Client(object):
                 ["/invite <nickname>", "invite user to room *"],
                 ["/join", "join chatroom"],
                 ["/kick <username>", "kick user from room *"],
-                ["/block <name>", "block user"],
                 ["/nick <nickname>", "change nickname"],
                 ["/file <filepath>", "send file"],
                 ["/list", "list users"],
@@ -533,8 +537,8 @@ class Client(object):
                     l = data.read()
                     fingerprint = hashlib.sha256(l).hexdigest()
                     size = os.path.getsize(path)
-                    if size > 150000000:  # 150 MB
-                        self.print("[-] Filesize to big (max 150MB)", color="yellow")
+                    if size > 10000000:  # 10MB
+                        self.print("[-] Filesize to big (max 10MB)", color="yellow")
                         return
                     ext = os.path.splitext(path)[1]
                     # name = path.replace("\\", "/").split("/")[-1].replace(ext, "")
@@ -549,10 +553,33 @@ class Client(object):
 
             elif len(cmd.split(" ")) > 1:
                 path = cmd.replace("file", "").replace('"', '').strip()
+                if path is None:
+                    return
                 send_file(path)
 
             else:
                 self.print("[-] Invalid input", color="yellow")
+
+        elif cmd.startswith("kick"):
+            try:
+                name = cmd.split(" ")[1]
+            except BaseException:
+                self.print("[-] Invalid input", color="yellow")
+                return
+            kick_id = None
+            kick_room = None
+            for id in self.userlist:
+                if self.userlist[id]["nick"] == name:
+                    kick_id = id
+                    kick_room = self.userlist[id]["room"]
+                    break
+            if kick_id:
+                self.send(
+                    "kick",
+                    kick_id,
+                )
+            else:
+                self.print("[-] Could not find user", color="yellow")
 
         else:
             self.print(

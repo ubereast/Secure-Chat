@@ -8,8 +8,6 @@ import hmac
 import sys
 import uuid
 import os
-# import dotenv
-# dotenv.load_dotenv("../.env")
 bson.patch_socket()
 
 HEADER_SIZE = 1024
@@ -44,7 +42,7 @@ class Client():
             header = int.from_bytes(self.socket.recv(HEADER_SIZE), "big")
             data = b""
             while len(data) < header:
-                data += self.socket.recv(min(1024, header - len(data)))
+                data += self.socket.recv(min(2048, header - len(data)))
             package = bson.loads(data)
         except socket.error:
             raise socket.error
@@ -332,6 +330,13 @@ class Server():
                         self.connections[client.room]["clients"][message["data"]["id"]].send("file", message["data"]["message"])
                 elif message["type"] == "file-received":
                     self.connections[client.room]["clients"][message["data"]["id"]].send("file-received", client.nickname)
+                elif message["type"] == "kick":
+                    if self.connections[client.room]["admin"] != client.id:
+                        client.send("warning", "You are not allowed to kick users")
+                        continue
+                    self.connections[client.room]["clients"][message["data"]].send("kick", None)
+                    self.broadcast("notification", "{} was kicked".format(self.connections[client.room]["clients"][message["data"]].nickname), self.connections[client.room]["clients"][message["data"]], client.room)
+                    self.join_room(self.connections[client.room]["clients"][message["data"]], "main")
                 else:
                     client.send("warning", "Invalid message type")
             except socket.error:

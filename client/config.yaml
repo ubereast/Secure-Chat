@@ -1,7 +1,7 @@
 server:
-  hosts:
-  - localhost
-  port: 10127
+    hosts:
+        - localhost
+    port: 10127
 user:
-  tui: true
-  use-random: true
+    tui: true
+    use-random: true
