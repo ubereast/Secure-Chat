@@ -8,7 +8,7 @@ class Chat:
     def __init__(self, userName="", debug=False):
         """ """
         self.tb = ttb.TerminalTextBoxes(
-            userName, self.character_callback, self.enter_callback
+            userName, self.character_callback, self.enter_callback, debug
         )
         self.tb.create_text_box_setup("setup")
 
@@ -18,14 +18,6 @@ class Chat:
         self.tb.create_text_box(
             "setup", "Online", 20, frameAttr="red", hOrient=ttb.H_ORIENT
             ["right"])
-        # self.tb.create_text_box(
-        #     "setup", "Chatrooms", 15, frameAttr="green", hOrient=ttb.H_ORIENT
-        #     ["right"])
-
-        if debug:
-            self.tb.create_text_box(
-                "setup", "Debug", 20, frameAttr="yellow", hOrient=ttb.H_ORIENT["left"]
-            )
 
         self.tb.set_focus_box("setup", "Chat")
 
@@ -65,10 +57,10 @@ class Chat:
         self.tb._change_user_name(userName)
         self.tb.update()
 
-    def print(self, text, color="white"):
+    def print(self, text, color="white", end="\n"):
         self.tb.add_text_item(
             "setup", "Chat", str(text),
-            attributes=color)
+            attributes=color, end=end)
         self.tb.update()
 
     def log(self, *args):

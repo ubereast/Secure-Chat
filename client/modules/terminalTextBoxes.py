@@ -82,7 +82,7 @@ DBG_BOX_INFO = {"name": 0, "textSize": 1, "boxSize": 2}
 class TerminalTextBoxes:
     """Terminal Text Boxes Class."""
 
-    def __init__(self, userName="", charCallback=None, enterCallback=None):
+    def __init__(self, userName="", charCallback=None, enterCallback=None, debug=False):
         """Init."""
         self.__fakeKeyboard = Controller()
 
@@ -135,7 +135,7 @@ class TerminalTextBoxes:
         self.__BOX_MIN_WIDTH = (self.__FRAME_SIZE * 2) + 1
         self.__BOX_MIN_HEIGHT = (self.__FRAME_SIZE * 2) + 1
 
-        self.debug = True
+        self.debug = debug
         self.dbgBoxPlacementShow = DBG_BOX_PLACEMENT["top"]
         self.dbgBoxInfoShow = DBG_BOX_INFO["name"]
 
@@ -373,7 +373,7 @@ class TerminalTextBoxes:
         self.__screen.refresh()
 
     def add_text_item(
-        self, setupName, boxName, text, attributes="white", lineType="wrap"
+        self, setupName, boxName, text, attributes="white", lineType="wrap", end="\n"
     ):
         """Adds a text item to the textItems list of the given text box.
         Arguments:
@@ -1395,12 +1395,13 @@ class TerminalTextBoxes:
             focusedBox = self.__boxSetup[self.__activeBoxSetup]["focusedBox"]
 
             # GENERAL KEY EVENTS --------------------------------------------------------------------------------------
-            if char == "\x1b":  # <ESC> KEY (Exit)
-                if self.__promptCharCallbackFunction != None:
-                    self.__promptCharCallbackFunction(char)
-                break
+            if self.debug:
+                if char == "\x1b":  # <ESC> KEY (Exit)
+                    if self.__promptCharCallbackFunction != None:
+                        self.__promptCharCallbackFunction(char)
+                    break
 
-            elif char == "\x00":  # "WINDOWS" KEY
+            if char == "\x00":  # "WINDOWS" KEY
                 pass
 
             elif char == curses.KEY_RESIZE:  # RESIZE EVENT

@@ -11,6 +11,8 @@ import yaml
 import names
 import requests
 import hashlib
+import tkinter as tk
+from tkinter import filedialog
 
 HEADER_SIZE = 1024
 
@@ -49,6 +51,9 @@ class Client(object):
         self.unmanaged_packages = []
 
     def start(self):
+        """
+        Start the client
+        """
         self.print("✓ Starting Secure-Chat Client", color="green")
         crypto.generate_key()
         self.print("\r✓ Generated key pair  ", color="green")
@@ -64,7 +69,7 @@ class Client(object):
         if not self.host:
             self.print("[-] Could not connect to server", color="red")
             return
-        self.print("✓ Connected to {}".format(self.host), color="green")
+        self.print("✓ Connected to Server", color="green")
         if self.conf["user"]["use-random"] is None:
             use_random_nick = input("Do you want to use a random nickname? [Y/n]: ")
             if use_random_nick.lower() == "y" or use_random_nick == "":
@@ -79,7 +84,7 @@ class Client(object):
                 self.conf["user"]["tui"] = False
         self.tui = self.conf["user"]["tui"]
         if self.tui:
-            self.chat = Chat()
+            self.chat = Chat(debug=False)
         self.auth = input("Verification code: ")
 
         if self.conf["user"]["use-random"]:
@@ -103,11 +108,27 @@ class Client(object):
     ###################
 
     def recv(self):
+        """
+        Receive a package from the server
+        :return:"""
         header = int.from_bytes(self.client.recv(HEADER_SIZE), "big")
-        package = bson.loads(self.client.recv(header))
+        data = b""
+        all = 0
+        progress = 0
+        while len(data) < header:
+            progress += min(4096, header - len(data))
+            data += self.client.recv(min(4096, header - len(data)))
+            # if header >= 10000000:
+            #     self.print("[-] Received {} of {} bytes      ".format(progress, header), color="red", end="\r")
+        package = bson.loads(data)
         return package
 
     def send(self, packet_type, packet_data):
+        """
+        Send a package to the server
+        :param packet_type:
+        :param packet_data:
+        :return:"""
         package = bson.dumps({"type": packet_type, "data": packet_data})
         header = len(package).to_bytes(HEADER_SIZE, "big")
 
@@ -116,46 +137,67 @@ class Client(object):
         return True
 
     def broadcast(self, package_type="message", package_data=None):
+        """
+        Broadcast a package to all users in the current room
+        :param package_type:
+        :param package_data:
+        :return:"""
+        if len(self.userlist) == 0:
+            return
+        if package_type == "message":
+            crypto.generate_aes_key()
+            package_data["messagedata"], package_data["nonce"] = crypto.aes_encrypt(package_data["messagedata"])
+        if package_type == "file":
+            crypto.generate_aes_key()
+            self.print("Encrypting file...         ", end="\r")
+            package_data["filedata"], package_data["nonce"] = crypto.aes_encrypt(package_data["filedata"])
+            package_data["fingerprint"], package_data["fingerprintnonce"] = crypto.aes_encrypt(package_data["fingerprint"])
+            self.print("Sending file...          ", end="\r")
         for user in self.userlist.values():
+            package_data_copy = package_data.copy()
             if user["room"] == self.room:
                 if package_type == "message":
-                    crypto.generate_aes_key()
-                    package_data["messagedata"], package_data["nonce"] = crypto.aes_encrypt(package_data["messagedata"])
-                    package_data["key"] = crypto.encrypt(crypto.AES_KEY, user["key"])
+                    package_data_copy["key"] = crypto.encrypt(crypto.AES_KEY, user["key"])
                 if package_type == "file":
-                    crypto.generate_aes_key()
-                    package_data["name"] = crypto.encrypt(package_data["name"], user["key"])
-                    package_data["filedata"], package_data["nonce"] = crypto.aes_encrypt(package_data["filedata"])
-                    package_data["key"] = crypto.encrypt(crypto.AES_KEY, user["key"])
-                    package_data["fingerprint"] = crypto.encrypt(package_data["fingerprint"], user["key"])
-                self.send(package_type, {"message": package_data, "id": user["id"]})
+                    package_data_copy["name"] = crypto.encrypt(package_data_copy["name"], user["key"])
+                    package_data_copy["key"] = crypto.encrypt(crypto.AES_KEY, user["key"])
+                    # self.print("Sendig file to {}...         ".format(user["nick"]), end="\r")
+                self.send(package_type, {"message": package_data_copy, "id": user["id"]})
 
-    def print(self, text, color="white"):
+    def print(self, text, color="white", end="\n"):
+        """
+        Prints text to the terminal.
+        :param text: Text to print
+        :param color: Color of the text
+        :return: None"""
         if self.tui and self.chat.tb.started:
-            self.chat.print(text, color)
+            self.chat.print(text, color, end)
         else:
             if color == "dim":
-                print("{}{}{}".format(Style.DIM, text, Style.RESET_ALL))
+                print("{}{}{}".format(Style.DIM, text, Style.RESET_ALL), end=end)
             elif color == "green":
-                print("{}{}{}".format(Fore.GREEN, text, Style.RESET_ALL))
+                print("{}{}{}".format(Fore.GREEN, text, Style.RESET_ALL), end=end)
             elif color == "red":
-                print("{}{}{}".format(Fore.RED, text, Style.RESET_ALL))
+                print("{}{}{}".format(Fore.RED, text, Style.RESET_ALL), end=end)
             elif color == "yellow":
-                print("{}{}{}".format(Fore.YELLOW, text, Style.RESET_ALL))
+                print("{}{}{}".format(Fore.YELLOW, text, Style.RESET_ALL), end=end)
             elif color == "cyan":
-                print("{}{}{}".format(Fore.CYAN, text, Style.RESET_ALL))
+                print("{}{}{}".format(Fore.CYAN, text, Style.RESET_ALL), end=end)
             elif color == "magenta":
-                print("{}{}{}".format(Fore.MAGENTA, text, Style.RESET_ALL))
+                print("{}{}{}".format(Fore.MAGENTA, text, Style.RESET_ALL), end=end)
             elif color == "light-magenta":
-                print("{}{}{}".format(Fore.LIGHTMAGENTA_EX, text, Style.RESET_ALL))
+                print("{}{}{}".format(Fore.LIGHTMAGENTA_EX, text, Style.RESET_ALL), end=end)
             else:
-                print(text)
+                print(text, end=end)
 
     ###########
     # THREADS #
     ###########
 
     def thread_handle_package(self):
+        """
+        Thread that handles packages from the server
+        :return:"""
         while True:
             if len(self.unmanaged_packages) > 0:
                 message = self.unmanaged_packages.pop(0)
@@ -171,21 +213,22 @@ class Client(object):
                     data = message["data"]
                     data["key"] = crypto.decrypt(data["key"], decodeData=False)
                     data["name"] = crypto.decrypt(data['name'])
-                    data["fingerprint"] = crypto.decrypt(data["fingerprint"])
+                    data["fingerprint"] = crypto.aes_decrypt(data["fingerprint"], data["key"], data["fingerprintnonce"], True)
                     file = open(f'{self.file_directory}/{data["name"]}{data["ext"]}', 'wb')
                     decr = crypto.aes_decrypt(data["filedata"], data["key"], data["nonce"], False)
                     fingerprint = hashlib.sha256(decr).hexdigest()
                     size = len(decr)
                     power = 2**10
                     n = 0
-                    power_labels = {0: '', 1: 'kilo', 2: 'mega', 3: 'giga', 4: 'tera'}
+                    power_labels = {0: '', 1: 'kb', 2: 'mb', 3: 'gb', 4: 'tb'}
                     while size > power:
                         size /= power
                         n += 1
+                    size = size // 1
                     label = power_labels[n]
-                    self.print(f"File: {data['name']}{data['ext']} ({size} {label})")
+                    self.print(f"File: {data['name']}{data['ext']} ({size} {label})", color="magenta")
                     if fingerprint == data["fingerprint"]:
-                        self.print("✓ Hash matches", color="green")
+                        self.print("✓ Signature matches", color="green")
                     else:
                         self.print("Hash does not match", color="red")
                     file.write(decr)
@@ -202,7 +245,8 @@ class Client(object):
                     self.client.close()
 
                 elif message["type"] == "accepted":
-                    self.print(f"{self.nickname} joined!", color="cyan")
+                    self.print("Type /help for a list of commands", color="cyan")
+                    self.print(f"you joined!", color="cyan")
                     continue
 
                 elif message["type"] == "server-auth":
@@ -300,13 +344,16 @@ class Client(object):
                     self.last_invite_room = message["data"]
 
                 elif message["type"] == "file-received":
-                    self.print("✓ File received", color="green")
+                    self.print("✓ {} received the file".format(message["data"]), color="green")
 
                 else:
                     self.print("Could not resolve message")
                     continue
 
     def thread_receive(self):
+        """
+        Thread to receive messages from the server
+        """
         while True:
             try:
                 package = self.recv()
@@ -335,11 +382,17 @@ class Client(object):
     ###################
 
     def check_dir_path(self):
+        """
+        Check if the directory path is valid
+        """
         if not os.path.exists(self.file_directory):
             self.print("Created directory for files at {}".format(self.file_directory.replace("/", "\\")), color="cyan")
             os.mkdir(self.file_directory)
 
     def handle_command(self, cmd):
+        """
+        Handle commands
+        """
         if cmd == "exit":
             self.client.close()
 
@@ -473,10 +526,9 @@ class Client(object):
             )
 
         elif cmd.startswith("file"):
-            if len(cmd.split(" ")) > 1:
-                path = cmd.replace("file", "").replace('"', '').strip()
-                exists = os.path.exists(path)
-                if exists:
+            def send_file(filepath):
+                """check if file exists and broadcast it"""
+                if os.path.isfile(filepath):
                     data = open(path, 'rb')
                     l = data.read()
                     fingerprint = hashlib.sha256(l).hexdigest()
@@ -491,6 +543,14 @@ class Client(object):
                         "filedata": l, "name": name, "ext": ext, "fingerprint": fingerprint})
                 else:
                     self.print("[-] File does not exist", color="yellow")
+            if cmd == "file":
+                path = self.file_select()
+                send_file(path)
+
+            elif len(cmd.split(" ")) > 1:
+                path = cmd.replace("file", "").replace('"', '').strip()
+                send_file(path)
+
             else:
                 self.print("[-] Invalid input", color="yellow")
 
@@ -500,6 +560,7 @@ class Client(object):
                 color="yellow")
 
     def read_conf(self):
+        """Reads the config file and sets the variables"""
         with open('config.yaml', 'r') as file:
             try:
                 conf = yaml.safe_load(file)
@@ -508,11 +569,24 @@ class Client(object):
                 print(exc)
 
     def save_conf(self):
+        """Saves the config file"""
         with open(r"config.yaml", 'w') as file:
             try:
                 yaml.dump(self.conf, file)
             except yaml.YAMLError as exc:
                 print(exc)
+
+    def file_select(self):
+        """
+        Opens a file selection dialog"""
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            file_path = filedialog.askopenfilename()
+            root.destroy()
+            return file_path
+        except BaseException:
+            return None
 
 
 client = Client()

@@ -8,8 +8,8 @@ import hmac
 import sys
 import uuid
 import os
-import dotenv
-dotenv.load_dotenv("../.env")
+# import dotenv
+# dotenv.load_dotenv("../.env")
 bson.patch_socket()
 
 HEADER_SIZE = 1024
@@ -26,6 +26,7 @@ class Client():
         self.room = None
 
     def send(self, package_type, package_data):
+        """Send a package to the client."""
         package = bson.dumps({"type": package_type, "data": package_data})
         header = len(package).to_bytes(HEADER_SIZE, "big")
 
@@ -38,9 +39,13 @@ class Client():
         return True
 
     def recv(self):
+        """Receive a package from the client."""
         try:
             header = int.from_bytes(self.socket.recv(HEADER_SIZE), "big")
-            package = bson.loads(self.socket.recv(header))
+            data = b""
+            while len(data) < header:
+                data += self.socket.recv(min(1024, header - len(data)))
+            package = bson.loads(data)
         except socket.error:
             raise socket.error
 
@@ -52,7 +57,7 @@ class Server():
 
         self.debug = True
 
-        self.host = socket.gethostbyname(socket.gethostname())
+        self.host = "0.0.0.0"
         self.port = 10127
         self.format = "utf-8"
 
@@ -80,6 +85,8 @@ class Server():
         self.public_key = None
 
     def start(self):
+        """
+        Start the server."""
         crypto.generate_key()
         self.public_key = crypto.public_key
 
@@ -91,12 +98,14 @@ class Server():
     ###################
 
     def listen(self):
-        print(f"✓ Listening on {self.host} port {self.port}")
+        """Listen for incoming connections."""
+        self.log(f"Listening on {self.host} port {self.port}")
         failed = 0
         while True:
             try:
                 client, address = self.server.accept()
                 address = address[0]
+                self.log("Incomming connection")
                 client = Client(client=client, addr=address)
                 if not self.fail2ban(address):
                     client.send("error", "[-] Connection refused")
@@ -114,7 +123,7 @@ class Server():
                 continue
 
     def login(self, client):
-        """"""
+        """Login a client."""
         try:
             # SERVER KEY EXCHANGE
             client.send("server-auth", None)
@@ -194,6 +203,7 @@ class Server():
             # USER RECV/SEND THREAD
             try:
                 client.send("accepted", None)
+                self.log("Client accepted")
                 threading.Thread(target=self.handle, args=(client,)).start()
             except Exception:
                 pass
@@ -202,6 +212,7 @@ class Server():
             pass
 
     def broadcast(self, package_type, package_data, client, room):
+        """Broadcast a package to all clients in a room."""
         if room is None:
             for room in self.connections:
                 for user in self.get_clients(room):
@@ -217,6 +228,7 @@ class Server():
                 pass
 
     def handle(self, client):
+        """Handle a client."""
         while True:
             try:
                 message = client.recv()
@@ -319,7 +331,7 @@ class Server():
                         message["data"]["message"]["id"] = client.id
                         self.connections[client.room]["clients"][message["data"]["id"]].send("file", message["data"]["message"])
                 elif message["type"] == "file-received":
-                    self.connections[client.room]["clients"][message["data"]["id"]].send("file-received", None)
+                    self.connections[client.room]["clients"][message["data"]["id"]].send("file-received", client.nickname)
                 else:
                     client.send("warning", "Invalid message type")
             except socket.error:
@@ -337,13 +349,18 @@ class Server():
                     None,
                 )
                 self.remove_empty()
+                self.log("{} disconnected".format(client.id))
                 return
 
     ###################
     # EXTRA FUNCTIONS #
     ###################
 
+    def log(self, message):
+        print("[{}] {}".format(time.strftime("%H:%M:%S"), message))
+
     def fail2ban(self, addr):
+        """Ban an address from connecting."""
         if not addr in self.connection_history:
             self.connection_history[addr] = [time.time() / 1000]
             return True
@@ -360,6 +377,7 @@ class Server():
         return True
 
     def key_exchange(self, client):
+        """Perform a key exchange with a client."""
         for key, room in self.connections.items():
             for id, user in room["clients"].items():
                 if id == client.id:
@@ -371,14 +389,16 @@ class Server():
                     pass
 
     def join_room(self, client, room):
+        """Join a room."""
         del self.connections[client.room]["clients"][client.id]
         client.room = room
         self.connections[room]["clients"][client.id] = client
-        self.broadcast("user-info-change", {"id": client.id, "user": {"key": client.public_key, "nick": client.nickname, "room": client.room}}, client, None)
+        self.broadcast("user-info-change", {"id": client.id, "user": {"id": client.id, "key": client.public_key, "nick": client.nickname, "room": client.room}}, client, None)
         time.sleep(0.2)
         client.send("room-change", room)
 
     def totp(self):
+        """Generate a TOTP code."""
         now = int(time.time() // 30)
         msg = now.to_bytes(8, "big")
         digest = hmac.new(self.authkey, msg, "sha1").digest()
@@ -389,12 +409,14 @@ class Server():
         return "{:06d}".format(code)
 
     def get_clients(self, room):
+        """Get all clients in a room."""
         clients = []
         for client in self.connections[room]["clients"].values():
             clients.append(client)
         return clients
 
     def remove_empty(self):
+        """Remove empty rooms."""
         empty = []
         for room in self.connections:
             if room == "main":
@@ -406,6 +428,7 @@ class Server():
             del self.connections[room]
 
     def checks(self):
+        """Check if a thread is still alive."""
         while True:
             self.remove_empty()
             for thread in self.threads:
