@@ -8,3 +8,4 @@ py -m pip install bson
 py -m pip install windows-curses
 py -m pip install colorama
 py -m pip install pynput
+py -m pip install names
