@@ -39,6 +39,7 @@ class Chat:
 
     def _update_user_list(self, userList, my_room):
         self.tb.clear_text_items("setup", "Online")
+        self.tb.add_text_item("setup", "Online", " rooms: ", attributes=["white"])
         room_list = {my_room: ["you"]}
         for user in userList.values():
             if user["room"] in room_list:
@@ -46,9 +47,9 @@ class Chat:
             else:
                 room_list[user["room"]] = [user["nick"]]
         for key, value in room_list.items():
-            self.tb.add_text_item("setup", "Online", f" - {key}")
+            self.tb.add_text_item("setup", "Online", f"  - {key}")
             for user in value:
-                self.tb.add_text_item("setup", "Online", "   - " + user)
+                self.tb.add_text_item("setup", "Online", "    - " + user)
         self.tb.update()
         return
 

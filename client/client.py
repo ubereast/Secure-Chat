@@ -7,7 +7,7 @@ from modules.chat import Chat
 import modules.crypto as crypto
 import bson
 import uuid
-import yaml
+import time
 import names
 import requests
 import hashlib
@@ -21,11 +21,13 @@ class Client(object):
 
     def __init__(self) -> None:
 
-        self.conf = self.read_conf()
         self.format = "utf-8"
 
         self.host = None
-        self.port = self.conf["server"]["port"]
+
+        self.hostlist = ["localhost", "<public-ip>"]
+        self.port = 10127
+
         self.client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
         self.auth = None
@@ -33,8 +35,13 @@ class Client(object):
 
         self.id = None
         self.room = "main"
+
         self.last_invite_room = None
+        self.last_request_user = None
+
         self.server_pub = None
+
+        self.useRandomNick = True
 
         self.userlist = {}
         self.chatrooms = []
@@ -42,7 +49,7 @@ class Client(object):
 
         self.version = "0.1"
 
-        self.tui = None
+        self.tui = True
         self.chat = None
 
         self.file_directory = os.path.join(os.path.expanduser('~/Documents'), "SecureMessage")
@@ -55,12 +62,14 @@ class Client(object):
         """
         Start the client
         """
+        if self.tui:
+            self.chat = Chat(debug=False)
         self.print("Starting Secure-Chat Client", color="green")
         self.server_pub = requests.get("https://k43-server.de/chat/public.pem").text.replace("\\n", "\n").encode(self.format)
         self.print("Got server public key", color="green")
         crypto.generate_key()
         self.print("\rGenerated key pair   ", color="green")
-        for addr in self.conf["server"]["hosts"]:
+        for addr in self.hostlist:
             if addr == "localhost":
                 addr = socket.gethostbyname(socket.gethostname())
             try:
@@ -73,38 +82,26 @@ class Client(object):
             self.print("[-] Could not connect to Server", color="red")
             return
         self.print("Connected to {}".format(self.host), color="green")
-        if self.conf["user"]["use-random"] is None:
-            use_random_nick = input("Do you want to use a random nickname? [Y/n]: ")
-            if use_random_nick.lower() == "y" or use_random_nick == "":
-                self.conf["user"]["use-random"] = True
-            else:
-                self.conf["user"]["use-random"] = False
-        if self.conf["user"]["tui"] is None:
-            tui = input("Do you want to use the terminal interface? [Y/n]: ")
-            if tui.lower() == "y" or tui == "":
-                self.conf["user"]["tui"] = True
-            else:
-                self.conf["user"]["tui"] = False
-        self.tui = self.conf["user"]["tui"]
-        if self.tui:
-            self.chat = Chat(debug=False)
+
         self.auth = input("Verification code: ")
 
-        if self.conf["user"]["use-random"]:
+        if self.useRandomNick:
             self.nickname = names.get_first_name().lower()
 
         self.threads.append(threading.Thread(target=self.thread_receive).start())
         self.threads.append(threading.Thread(target=self.thread_handle_package).start())
+
         if self.tui:
+
             self.chat.tb.start()
             self.chat._change_user_name(f"{self.nickname}@{self.room}")
             self.chat._change_user_name("{}@{}".format(self.nickname, self.room))
             self.chat._update_user_list(self.userlist, self.room)
             self.chat.writeCallBack = self.thread_user_input
             self.chat.tb.update()
+
         else:
             self.threads.append(threading.Thread(target=self.thread_user_input).start())
-        self.save_conf()
 
     ###################
     # BASIC FUNCTIONS #
@@ -208,7 +205,7 @@ class Client(object):
                     data = message["data"]
                     data["key"] = crypto.decrypt(data["key"], decodeData=False)
                     dec_message = crypto.aes_decrypt(data["messagedata"], data["key"], data["nonce"], True)
-                    self.print(str(dec_message), color=["white", "bold"])
+                    self.print(str(dec_message), color=["white"])
                     continue
 
                 elif message["type"] == "file":
@@ -348,6 +345,10 @@ class Client(object):
                 elif message["type"] == "file-received":
                     self.print("{} received the file".format(message["data"]), color="green")
 
+                elif message["type"] == "join-req":
+                    self.last_request_user = message["data"]
+                    self.print("{} wants to join the room".format(message["data"]), color="cyan")
+
                 elif message["type"] == "kick":
                     self.print("You were kicked from the room", color="red")
 
@@ -377,7 +378,7 @@ class Client(object):
             elif len(user_input) > 0:
                 if self.tui:
                     self.print(f"[{self.nickname}] {user_input}",
-                               color=["white", "bold"])
+                               color=["white"])
                 self.broadcast("message", {"messagedata": "{}: {}".format(self.nickname, user_input)})
             if self.tui:
                 return
@@ -416,12 +417,14 @@ class Client(object):
                 ["/whisper <nickname>", "whisper to a user"],
                 ["/chatroom <name>", "create room"],
                 ["/invite <nickname>", "invite user to room *"],
-                ["/join", "join chatroom"],
+                ["/join (<chatroom>)", "join chatroom"],
                 ["/kick <username>", "kick user from room *"],
-                ["/nick <nickname>", "change nickname"],
-                ["/file <filepath>", "send file"],
-                ["/list", "list users"],
+                ["/accept (<nickname>)", "accept join request *"],
+                ["/decline (<nickname>)", "decline join request *"],
                 ["/leave", "leave room"],
+                ["/nick <nickname>", "change nickname"],
+                ["/file (<filepath>)", "send file"],
+                ["/list", "list users"],
                 ["/exit", "exit chat"],
             ]
             table = tabulate(commands, tablefmt="plain")
@@ -581,27 +584,60 @@ class Client(object):
             else:
                 self.print("[-] Could not find user", color="yellow")
 
+        elif cmd.startswith("accept"):
+            if len(cmd.split(" ")) == 1:
+                if self.last_request_user:
+                    cmd = f"accept {self.last_request_user}"
+                    self.last_request_user = None
+            try:
+                name = cmd.split(" ")[1]
+            except BaseException:
+                self.print("[-] Invalid input", color="yellow")
+                return
+            requested_id = None
+            requested_room = None
+            for id in self.userlist:
+                if self.userlist[id]["nick"] == name:
+                    requested_id = id
+                    requested_room = self.userlist[id]["room"]
+                    break
+            if requested_id:
+                self.send(
+                    "accept",
+                    {"id": requested_id, "room": requested_room},
+                )
+            else:
+                self.print("[-] Could not find user", color="yellow")
+
+        elif cmd.startswith("decline"):
+            if len(cmd.split(" ")) == 1:
+                if self.last_request_user:
+                    cmd = f"accept {self.last_request_user}"
+                    self.last_request_user = None
+            try:
+                name = cmd.split(" ")[1]
+            except BaseException:
+                self.print("[-] Invalid input", color="yellow")
+                return
+            requested_id = None
+            requested_room = None
+            for id in self.userlist:
+                if self.userlist[id]["nick"] == name:
+                    requested_id = id
+                    requested_room = self.userlist[id]["room"]
+                    break
+            if requested_id:
+                self.send(
+                    "decline",
+                    {"id": requested_id, "room": requested_room},
+                )
+            else:
+                self.print("[-] Could not find user", color="yellow")
+
         else:
             self.print(
                 "[-] Could not find command. Type /help for list of commands",
                 color="yellow")
-
-    def read_conf(self):
-        """Reads the config file and sets the variables"""
-        with open('config.yaml', 'r') as file:
-            try:
-                conf = yaml.safe_load(file)
-                return conf
-            except yaml.YAMLError as exc:
-                print(exc)
-
-    def save_conf(self):
-        """Saves the config file"""
-        with open(r"config.yaml", 'w') as file:
-            try:
-                yaml.dump(self.conf, file)
-            except yaml.YAMLError as exc:
-                print(exc)
 
     def file_select(self):
         """

@@ -8,7 +8,7 @@ import hmac
 import sys
 import uuid
 import os
-bson.patch_socket()
+import random
 
 HEADER_SIZE = 1024
 
@@ -69,7 +69,7 @@ class Server():
             print("Coult not bind server to {} -p {}".format(self.host, self.port))
             sys.exit()
 
-        self.connections = {"main": {"admin": None, "clients": {}, "invited-ids": []}}
+        self.connections = {"main": {"admin": None, "clients": {}, "invited-ids": [], "requests": []}}
         self.connection_history = {}
         self.connection_ban_time = 120
 
@@ -250,6 +250,7 @@ class Server():
                         "admin": client.id,
                         "clients": {client.id: client},
                         "invited-ids": [],
+                        "requests": [],
                     }
                     self.join_room(client, message["data"])
                     self.broadcast("new-room", message["data"], client, None)
@@ -309,9 +310,14 @@ class Server():
                             "{} joined the room".format(client.nickname), client, message["data"])
                     else:
                         client.send(
-                            "warning",
-                            "You are not allowed to join this room!",
+                            "notification",
+                            "A join request has been sent to the admin of this room",
                         )
+                        self.connections[message["data"]]["clients"][self.connections[message["data"]]["admin"]].send(
+                            "join-req",
+                            client.nickname
+                        )
+                        self.connections[message["data"]]["requests"].append(client.id)
                 elif message["type"] == "leave":
                     if client.room == "main":
                         continue
@@ -322,6 +328,14 @@ class Server():
                         client.room,
                     )
                     client.send("notification", "You left the room")
+                    if self.connections[client.room]["admin"] == client.id:
+                        room_ids = []
+                        for id, user in self.connections[client.room]["clients"].items():
+                            if id != client.id:
+                                room_ids.append(id)
+                        if len(room_ids) > 0:
+                            self.connections[client.room]["admin"] = room_ids[0]
+                            self.connections[client.room]["clients"][self.connections[client.room]["admin"]].send("notification", "You are now the admin of this room")
                     self.join_room(client, "main")
                     self.remove_empty()
                 elif message["type"] == "file":
@@ -337,6 +351,19 @@ class Server():
                     self.connections[client.room]["clients"][message["data"]].send("kick", None)
                     self.broadcast("notification", "{} was kicked".format(self.connections[client.room]["clients"][message["data"]].nickname), self.connections[client.room]["clients"][message["data"]], client.room)
                     self.join_room(self.connections[client.room]["clients"][message["data"]], "main")
+                elif message["type"] == "accept":
+                    if client.id == self.connections[client.room]["admin"]:
+                        if message["data"]["id"] in self.connections[client.room]["requests"]:
+                            self.join_room(self.connections[message["data"]["room"]]["clients"][message["data"]["id"]], client.room)
+                            self.broadcast("notification", "{} joined the room".format(self.connections[client.room]["clients"][message["data"]["id"]].nickname), self.connections[client.room]["clients"][message["data"]["id"]], client.room)
+                            self.connections[client.room]["requests"].remove(message["data"]["id"])
+                elif message["type"] == "decline":
+                    if client.id == self.connections[client.room]["admin"]:
+                        if message["data"]["id"] in self.connections[client.room]["requests"]:
+                            declined_client = self.connections[message["data"]["room"]]["clients"][message["data"]["id"]]
+                            if declined_client:
+                                declined_client.send("warning", "Your request to join the room has been declined")
+                            self.connections[client.room]["requests"].remove(message["data"]["id"])
                 else:
                     client.send("warning", "Invalid message type")
             except socket.error:
@@ -440,6 +467,14 @@ class Server():
                 if not thread.is_alive():
                     thread.start()
             time.sleep(60)
+
+    def searchId(self, id):
+        """Search for a client by id."""
+        for room in self.connections:
+            for client in self.connections[room]["clients"].values():
+                if client.id == id:
+                    return client
+        return None
 
 
 if __name__ == "__main__":
